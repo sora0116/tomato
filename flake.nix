@@ -33,6 +33,8 @@
         };
         runtimeLibs = with pkgs; [
           glib
+          glib-networking
+          gst_all_1.gstreamer
           gtk3
           libayatana-appindicator
           librsvg
@@ -40,6 +42,10 @@
           openssl
           webkitgtk_4_1
           xdotool
+          gst_all_1.gst-plugins-base
+          gst_all_1.gst-plugins-good
+          gst_all_1.gst-plugins-bad
+          gst_all_1.gst-libav
         ];
         desktopItem = pkgs.makeDesktopItem {
           name = "pomodoro-timer";
@@ -110,6 +116,9 @@
               $out/share/icons/hicolor/128x128/apps/pomodoro-timer.png
 
             wrapProgram $out/bin/pomodoro-timer \
+              --set POMODORO_DISABLE_TRAY 1 \
+              --set GST_PLUGIN_SYSTEM_PATH_1_0 ${pkgs.lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" runtimeLibs} \
+              --set GST_PLUGIN_SCANNER_1_0 ${pkgs.gst_all_1.gstreamer.dev}/libexec/gstreamer-1.0/gst-plugin-scanner \
               --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath runtimeLibs}
 
             runHook postInstall
@@ -139,7 +148,17 @@
             libayatana-appindicator
             librsvg
             xdotool
+            glib-networking
+            gst_all_1.gstreamer
+            gst_all_1.gst-plugins-base
+            gst_all_1.gst-plugins-good
+            gst_all_1.gst-plugins-bad
+            gst_all_1.gst-libav
           ];
+
+          shellHook = ''
+            export POMODORO_DISABLE_TRAY=1
+          '';
         };
       }
     );

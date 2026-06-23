@@ -2,6 +2,7 @@
   import type { TimerStatus } from "../lib/config";
 
   let {
+    ready,
     status,
     onStart,
     onPause,
@@ -9,6 +10,7 @@
     onSkip,
     onReset,
   }: {
+    ready: boolean;
     status: TimerStatus;
     onStart: () => void;
     onPause: () => void;
@@ -24,6 +26,7 @@
       class="primary-button"
       type="button"
       onclick={onStart}
+      disabled={!ready}
     >
       Start
     </button>
@@ -32,6 +35,7 @@
       class="primary-button"
       type="button"
       onclick={onPause}
+      disabled={!ready}
     >
       Pause
     </button>
@@ -40,6 +44,7 @@
       class="primary-button"
       type="button"
       onclick={onResume}
+      disabled={!ready}
     >
       Resume
     </button>
@@ -49,7 +54,7 @@
     class="secondary-button"
     type="button"
     onclick={onSkip}
-    disabled={status === "idle"}
+    disabled={!ready || status === "idle"}
   >
     Skip
   </button>
@@ -57,6 +62,7 @@
     class="secondary-button"
     type="button"
     onclick={onReset}
+    disabled={!ready}
   >
     Reset
   </button>

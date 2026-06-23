@@ -19,7 +19,7 @@
       checked={enabled}
       onchange={(event) => onToggle((event.currentTarget as HTMLInputElement).checked)}
     />
-    <span>Brown noise during focus</span>
+    <span>Gentle noise during focus</span>
   </label>
 
   <label class="field">

@@ -6,8 +6,10 @@ import {
   createInitialTimerState,
   type AppConfig,
   type ConfigLoadResponse,
+  fromWireConfig,
   type PresetField,
   type TimerState,
+  toWireConfig,
 } from "./config";
 import { BrownNoiseEngine } from "./audio/brownNoise";
 import { notifyTransition } from "./notifications";
@@ -25,6 +27,7 @@ import {
 import { updateTray } from "./tray";
 
 export type PomodoroViewState = {
+  ready: boolean;
   config: AppConfig;
   configPath: string;
   timer: TimerState;
@@ -70,6 +73,7 @@ export function createPomodoroController() {
   let timer = createInitialTimerState(config);
   let configPath = "";
   let notice: string | null = null;
+  let ready = false;
   let windowVisible = true;
   let subscribers = new Set<(state: PomodoroViewState) => void>();
   let tickHandle: number | undefined;
@@ -144,6 +148,11 @@ export function createPomodoroController() {
     }
   };
 
+  const shouldPlayBrownNoise = () =>
+    config.audio.brownNoiseEnabled &&
+    timer.status === "running" &&
+    timer.mode === "focus";
+
   const startTicker = () => {
     if (tickHandle !== undefined || timer.status !== "running") {
       return;
@@ -192,8 +201,8 @@ export function createPomodoroController() {
   };
 
   const saveConfig = async () => {
-    const saved = await invoke<AppConfig>("save_config", { config });
-    config = clampConfig(saved);
+    const saved = await invoke("save_config", { config: toWireConfig(config) });
+    config = fromWireConfig(saved as AppConfig);
     if (timer.status === "idle") {
       timer = {
         ...timer,
@@ -211,7 +220,7 @@ export function createPomodoroController() {
   const load = async () => {
     try {
       const response = await invoke<ConfigLoadResponse>("load_config");
-      config = clampConfig(response.config);
+      config = fromWireConfig(response.config);
       configPath = response.configPath;
       timer = createInitialTimerState(config);
       if (response.recoveredFromCorruption) {
@@ -222,6 +231,7 @@ export function createPomodoroController() {
       audio.setVolume(config.audio.volume);
       audio.setFadeInMs(config.audio.fadeInMs);
     } finally {
+      ready = true;
       await syncDerived(true);
     }
   };
@@ -253,6 +263,7 @@ export function createPomodoroController() {
           ? getDurationMs(config, config.activePreset, timer.mode)
           : getRemainingMs(timer);
       return {
+        ready,
         config,
         configPath,
         timer,
@@ -298,34 +309,64 @@ export function createPomodoroController() {
       };
     },
 
+    async primeAudio() {
+      try {
+        audio.prime();
+      } catch (error) {
+        console.error("audio prepare failed", error);
+      }
+    },
+
     async start() {
-      await audio.prepare();
+      if (!ready) {
+        return;
+      }
       timer = startTimer(timer, config);
+      if (shouldPlayBrownNoise()) {
+        await audio.start();
+      }
       await syncDerived(true);
     },
 
     async pause() {
+      if (!ready) {
+        return;
+      }
       timer = pauseTimer(timer);
       await syncDerived(true);
     },
 
     async resume() {
-      await audio.prepare();
+      if (!ready) {
+        return;
+      }
       timer = resumeTimer(timer);
+      if (shouldPlayBrownNoise()) {
+        await audio.start();
+      }
       await syncDerived(true);
     },
 
     async skip() {
+      if (!ready) {
+        return;
+      }
       timer = skipTimer(timer, config);
       await syncDerived(true);
     },
 
     async reset() {
+      if (!ready) {
+        return;
+      }
       timer = resetTimer(timer, config);
       await syncDerived();
     },
 
     async selectPreset(presetName: string) {
+      if (!ready) {
+        return;
+      }
       if (!config.presets[presetName]) {
         return;
       }
@@ -337,6 +378,12 @@ export function createPomodoroController() {
     },
 
     async setBrownNoiseEnabled(enabled: boolean) {
+      if (!ready) {
+        return;
+      }
+      if (enabled) {
+        await api.primeAudio();
+      }
       await setConfig({
         ...config,
         audio: {
@@ -347,6 +394,9 @@ export function createPomodoroController() {
     },
 
     async setVolume(volume: number) {
+      if (!ready) {
+        return;
+      }
       await setConfig({
         ...config,
         audio: {
@@ -357,6 +407,9 @@ export function createPomodoroController() {
     },
 
     async setFadeInMs(fadeInMs: number) {
+      if (!ready) {
+        return;
+      }
       await setConfig({
         ...config,
         audio: {
@@ -367,6 +420,9 @@ export function createPomodoroController() {
     },
 
     async setDesktopNotifications(enabled: boolean) {
+      if (!ready) {
+        return;
+      }
       await setConfig({
         ...config,
         notification: {
@@ -377,6 +433,9 @@ export function createPomodoroController() {
     },
 
     async setNotificationSound(enabled: boolean) {
+      if (!ready) {
+        return;
+      }
       await setConfig({
         ...config,
         notification: {
@@ -387,6 +446,9 @@ export function createPomodoroController() {
     },
 
     async addPreset() {
+      if (!ready) {
+        return;
+      }
       let index = 2;
       let name = `preset_${index}`;
       while (config.presets[name]) {
@@ -403,6 +465,9 @@ export function createPomodoroController() {
     },
 
     async deletePreset(presetName: string) {
+      if (!ready) {
+        return;
+      }
       if (Object.keys(config.presets).length <= 1 || !config.presets[presetName]) {
         return;
       }
@@ -419,6 +484,9 @@ export function createPomodoroController() {
     },
 
     async renamePreset(oldName: string, newName: string) {
+      if (!ready) {
+        return;
+      }
       const sanitized = newName.trim().replace(/\s+/g, "_");
       if (!sanitized || sanitized === oldName || config.presets[sanitized]) {
         return;
@@ -437,6 +505,9 @@ export function createPomodoroController() {
     },
 
     async updatePreset(presetName: string, field: PresetField, value: number) {
+      if (!ready) {
+        return;
+      }
       const preset = config.presets[presetName];
       if (!preset) {
         return;

@@ -1,31 +1,22 @@
 export class BrownNoiseEngine {
-  private context: AudioContext | null = null;
-  private source: AudioBufferSourceNode | null = null;
-  private gainNode: GainNode | null = null;
+  private audio: HTMLAudioElement | null = null;
+  private objectUrl: string | null = null;
   private volume = 0.18;
   private fadeInMs = 500;
+  private fadeTimer: number | null = null;
 
   async prepare(): Promise<void> {
-    if (typeof window === "undefined") {
-      return;
-    }
+    this.ensureAudio();
+  }
 
-    if (!this.context) {
-      this.context = new AudioContext();
-      this.gainNode = this.context.createGain();
-      this.gainNode.gain.value = 0;
-      this.gainNode.connect(this.context.destination);
-    }
-
-    if (this.context.state === "suspended") {
-      await this.context.resume();
-    }
+  prime(): void {
+    this.ensureAudio();
   }
 
   setVolume(volume: number): void {
     this.volume = Math.min(1, Math.max(0, volume));
-    if (this.gainNode) {
-      this.gainNode.gain.value = this.volume;
+    if (this.audio && this.fadeTimer === null) {
+      this.audio.volume = this.volume;
     }
   }
 
@@ -34,62 +25,161 @@ export class BrownNoiseEngine {
   }
 
   async start(): Promise<void> {
-    await this.prepare();
-    if (!this.context || !this.gainNode) {
+    const audio = this.ensureAudio();
+    if (!audio) {
       return;
     }
 
-    if (this.source) {
+    if (!audio.paused) {
       return;
     }
 
-    const buffer = this.createBuffer(this.context);
-    const source = this.context.createBufferSource();
-    source.buffer = buffer;
-    source.loop = true;
-    source.connect(this.gainNode);
-
-    const now = this.context.currentTime;
-    this.gainNode.gain.cancelScheduledValues(now);
-    this.gainNode.gain.setValueAtTime(0, now);
-    this.gainNode.gain.linearRampToValueAtTime(this.volume, now + this.fadeInMs / 1000);
-
-    source.start();
-    source.onended = () => {
-      if (this.source === source) {
-        this.source = null;
-      }
-    };
-    this.source = source;
+    audio.currentTime = 0;
+    audio.volume = 0;
+    await audio.play();
+    this.fadeIn();
   }
 
   stop(): void {
-    if (!this.source) {
+    if (this.fadeTimer !== null) {
+      window.clearInterval(this.fadeTimer);
+      this.fadeTimer = null;
+    }
+
+    if (!this.audio) {
       return;
     }
 
-    this.source.stop();
-    this.source.disconnect();
-    this.source = null;
-    if (this.gainNode) {
-      this.gainNode.gain.cancelScheduledValues(this.context?.currentTime ?? 0);
-      this.gainNode.gain.value = 0;
-    }
+    this.audio.pause();
+    this.audio.currentTime = 0;
+    this.audio.volume = 0;
   }
 
-  private createBuffer(context: AudioContext): AudioBuffer {
-    const durationSeconds = 2;
-    const frameCount = context.sampleRate * durationSeconds;
-    const buffer = context.createBuffer(1, frameCount, context.sampleRate);
-    const data = buffer.getChannelData(0);
-    let lastOut = 0;
+  private ensureAudio(): HTMLAudioElement | null {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    if (this.audio) {
+      return this.audio;
+    }
+
+    this.objectUrl = URL.createObjectURL(this.createNoiseWavBlob());
+    const audio = new Audio(this.objectUrl);
+    audio.loop = true;
+    audio.preload = "auto";
+    audio.volume = 0;
+    this.audio = audio;
+    return audio;
+  }
+
+  private fadeIn(): void {
+    if (!this.audio) {
+      return;
+    }
+
+    if (this.fadeTimer !== null) {
+      window.clearInterval(this.fadeTimer);
+      this.fadeTimer = null;
+    }
+
+    if (this.fadeInMs <= 0) {
+      this.audio.volume = this.volume;
+      return;
+    }
+
+    const startedAt = performance.now();
+    this.fadeTimer = window.setInterval(() => {
+      if (!this.audio) {
+        return;
+      }
+
+      const progress = Math.min(1, (performance.now() - startedAt) / this.fadeInMs);
+      this.audio.volume = this.volume * progress;
+      if (progress >= 1 && this.fadeTimer !== null) {
+        window.clearInterval(this.fadeTimer);
+        this.fadeTimer = null;
+      }
+    }, 16);
+  }
+
+  private createNoiseWavBlob(): Blob {
+    const sampleRate = 44_100;
+    const durationSeconds = 24;
+    const frameCount = sampleRate * durationSeconds;
+    const dataSize = frameCount * 2;
+    const wav = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(wav);
+    const samples = this.createGentleNoiseSamples(frameCount);
+
+    writeAscii(view, 0, "RIFF");
+    view.setUint32(4, 36 + dataSize, true);
+    writeAscii(view, 8, "WAVE");
+    writeAscii(view, 12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeAscii(view, 36, "data");
+    view.setUint32(40, dataSize, true);
+
+    for (let index = 0; index < frameCount; index += 1) {
+      const sample = Math.max(-1, Math.min(1, samples[index] ?? 0));
+      view.setInt16(44 + index * 2, sample * 0x7fff, true);
+    }
+
+    return new Blob([wav], { type: "audio/wav" });
+  }
+
+  private createGentleNoiseSamples(frameCount: number): Float32Array {
+    const samples = new Float32Array(frameCount);
+    let brown = 0;
+    let low = 0;
+    let sub = 0;
+    let dcInput = 0;
+    let dcOutput = 0;
+    let maxAbs = 0;
 
     for (let index = 0; index < frameCount; index += 1) {
       const white = Math.random() * 2 - 1;
-      lastOut = (lastOut + 0.02 * white) / 1.02;
-      data[index] = lastOut * 3.5;
+      brown = (brown + white * 0.018) / 1.018;
+      low = low * 0.975 + brown * 0.025;
+      sub = sub * 0.992 + low * 0.008;
+
+      const mixed = brown * 0.62 + low * 0.3 + sub * 0.07 + white * 0.01;
+      const highPassed = mixed - dcInput + 0.9985 * dcOutput;
+      dcInput = mixed;
+      dcOutput = highPassed;
+
+      const sample = Math.tanh(highPassed * 2.4);
+      samples[index] = sample;
+      maxAbs = Math.max(maxAbs, Math.abs(sample));
     }
 
-    return buffer;
+    if (maxAbs > 0) {
+      const scale = 0.36 / maxAbs;
+      for (let index = 0; index < frameCount; index += 1) {
+        samples[index] *= scale;
+      }
+    }
+
+    // Avoid a click at the loop boundary.
+    const fadeFrames = 2_000;
+    for (let index = 0; index < fadeFrames; index += 1) {
+      const gain = index / fadeFrames;
+      samples[index] *= gain;
+      samples[frameCount - 1 - index] *= gain;
+    }
+
+    return samples;
+  }
+}
+
+function writeAscii(view: DataView, offset: number, value: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
   }
 }

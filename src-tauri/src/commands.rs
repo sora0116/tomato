@@ -41,15 +41,19 @@ pub fn update_tray_state(
   state: State<'_, AppState>,
   payload: TrayStatePayload,
 ) -> Result<(), String> {
+  if !state.tray_enabled {
+    return Ok(());
+  }
+
   {
     let mut tray_state = state.tray_state.lock().map_err(|_| "tray state lock poisoned")?;
     *tray_state = tray::TrayPresentationState::from_payload(&payload);
   }
 
   let guard = state.tray.lock().map_err(|_| "tray lock poisoned")?;
-  let controller = guard
-    .as_ref()
-    .ok_or_else(|| "tray not initialized".to_string())?;
+  let Some(controller) = guard.as_ref() else {
+    return Ok(());
+  };
   tray::apply_tray_state(controller, &payload)?;
 
   if let Some(window) = app.get_webview_window("main") {

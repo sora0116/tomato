@@ -3,8 +3,7 @@ mod config;
 mod notification;
 mod tray;
 
-use std::sync::Mutex;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::{env, panic::{catch_unwind, AssertUnwindSafe}, sync::Mutex};
 
 use config::{ConfigLoadInfo, ConfigManager};
 use tauri::{AppHandle, Emitter, Manager, Window, WindowEvent};
@@ -13,6 +12,7 @@ use tray::{create_tray, TrayPresentationState};
 pub struct AppState {
   config: Mutex<ConfigManager>,
   config_load_info: ConfigLoadInfo,
+  tray_enabled: bool,
   tray_state: Mutex<TrayPresentationState>,
   tray: Mutex<Option<tray::TrayController>>,
 }
@@ -20,9 +20,14 @@ pub struct AppState {
 impl AppState {
   fn new() -> Self {
     let (config, load_info) = ConfigManager::load_or_initialize();
+    let tray_enabled = !matches!(
+      env::var("POMODORO_DISABLE_TRAY").ok().as_deref(),
+      Some("1" | "true" | "TRUE" | "yes" | "YES")
+    );
     Self {
       config: Mutex::new(config),
       config_load_info: load_info,
+      tray_enabled,
       tray_state: Mutex::new(TrayPresentationState::default()),
       tray: Mutex::new(None),
     }
@@ -52,6 +57,11 @@ pub fn run() {
     .plugin(tauri_plugin_notification::init())
     .manage(AppState::new())
     .setup(|app| {
+      if !app.state::<AppState>().tray_enabled {
+        eprintln!("tray disabled by POMODORO_DISABLE_TRAY");
+        return Ok(());
+      }
+
       let tray_result = catch_unwind(AssertUnwindSafe(|| {
         create_tray(app.handle(), |app_handle, action| match action {
           tray::TrayAction::Start => emit_tray_action(app_handle, "start"),

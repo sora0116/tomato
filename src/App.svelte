@@ -13,9 +13,11 @@
   let dialogOpen = false;
 
   onMount(() => {
-    return controller.subscribe((next) => {
+    const unsubscribe = controller.subscribe((next) => {
       state = next;
     });
+
+    return unsubscribe;
   });
 
   const openSettings = () => {
@@ -36,7 +38,6 @@
     <div class="panel__header">
       <div>
         <p class="eyebrow">Pomodoro Timer</p>
-        <h1>Focused sessions without extra overhead.</h1>
       </div>
       <button
         class="ghost-button"
@@ -59,6 +60,7 @@
     />
 
     <TimerControls
+      ready={state.ready}
       status={state.timer.status}
       onStart={() => controller.start()}
       onPause={() => controller.pause()}
@@ -70,7 +72,7 @@
     <PresetSelector
       presets={Object.keys(state.config.presets)}
       activePreset={state.config.activePreset}
-      disabled={state.timer.status !== "idle"}
+      disabled={!state.ready || state.timer.status !== "idle"}
       onSelect={(presetName) => controller.selectPreset(presetName)}
     />
 
