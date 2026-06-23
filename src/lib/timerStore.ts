@@ -73,6 +73,8 @@ export function createPomodoroController() {
   let windowVisible = true;
   let subscribers = new Set<(state: PomodoroViewState) => void>();
   let tickHandle: number | undefined;
+  let tickInFlight = false;
+  let lastTrayState = "";
 
   audio.setVolume(config.audio.volume);
   audio.setFadeInMs(config.audio.fadeInMs);
@@ -84,17 +86,40 @@ export function createPomodoroController() {
     }
   };
 
-  const syncTray = async () => {
+  const stopTicker = () => {
+    if (tickHandle === undefined) {
+      return;
+    }
+
+    window.clearInterval(tickHandle);
+    tickHandle = undefined;
+    tickInFlight = false;
+  };
+
+  const syncTray = async (force = false) => {
+    const remainingLabel =
+      timer.status === "idle"
+        ? formatRemaining(getDurationMs(config, config.activePreset, timer.mode))
+        : formatRemaining(getRemainingMs(timer));
+    const trayState = [
+      timer.status,
+      timer.mode,
+      remainingLabel,
+      windowVisible ? "visible" : "hidden",
+    ].join("|");
+
+    if (!force && trayState === lastTrayState) {
+      return;
+    }
+
     try {
       await updateTray({
         status: timer.status,
         mode: timer.mode,
-        remainingLabel:
-          timer.status === "idle"
-            ? formatRemaining(getDurationMs(config, config.activePreset, timer.mode))
-            : formatRemaining(getRemainingMs(timer)),
+        remainingLabel,
         windowVisible,
       });
+      lastTrayState = trayState;
     } catch (error) {
       console.error("tray update failed", error);
     }
@@ -119,30 +144,51 @@ export function createPomodoroController() {
     }
   };
 
-  const syncDerived = async () => {
-    await syncAudio();
-    await syncTray();
-    notify();
-  };
-
   const startTicker = () => {
-    if (tickHandle !== undefined) {
+    if (tickHandle !== undefined || timer.status !== "running") {
       return;
     }
 
-    tickHandle = window.setInterval(async () => {
-      const transition = tickTimer(timer, config, Date.now());
-      timer = transition.nextState;
-      if (transition.notification) {
-        await notifyTransition(
-          transition.notification.title,
-          transition.notification.body,
-          config.notification.desktopNotification,
-          config.notification.soundEnabled,
-        );
+    tickHandle = window.setInterval(() => {
+      if (tickInFlight) {
+        return;
       }
-      await syncDerived();
+
+      tickInFlight = true;
+      void (async () => {
+        try {
+          const transition = tickTimer(timer, config, Date.now());
+          timer = transition.nextState;
+          if (transition.notification) {
+            await notifyTransition(
+              transition.notification.title,
+              transition.notification.body,
+              config.notification.desktopNotification,
+              config.notification.soundEnabled,
+            );
+          }
+          await syncDerived();
+        } finally {
+          tickInFlight = false;
+        }
+      })();
     }, 1_000);
+  };
+
+  const ensureTickerState = () => {
+    if (timer.status === "running") {
+      startTicker();
+      return;
+    }
+
+    stopTicker();
+  };
+
+  const syncDerived = async (forceTray = false) => {
+    ensureTickerState();
+    await syncAudio();
+    await syncTray(forceTray);
+    notify();
   };
 
   const saveConfig = async () => {
@@ -176,7 +222,7 @@ export function createPomodoroController() {
       audio.setVolume(config.audio.volume);
       audio.setFadeInMs(config.audio.fadeInMs);
     } finally {
-      await syncDerived();
+      await syncDerived(true);
     }
   };
 
@@ -231,7 +277,7 @@ export function createPomodoroController() {
       void Promise.all([
         getCurrentWindow().onFocusChanged(async ({ payload }) => {
           windowVisible = payload;
-          await syncTray();
+          await syncTray(true);
         }),
         listen<TrayActionEvent>("tray-action", async (event) => {
           await handleTrayAction(event.payload.action);
@@ -242,10 +288,11 @@ export function createPomodoroController() {
         unlistenTray = trayUnlisten;
       });
 
-      startTicker();
-
       return () => {
         subscribers.delete(subscriber);
+        if (subscribers.size === 0) {
+          stopTicker();
+        }
         unlistenWindow?.();
         unlistenTray?.();
       };
@@ -254,23 +301,23 @@ export function createPomodoroController() {
     async start() {
       await audio.prepare();
       timer = startTimer(timer, config);
-      await syncDerived();
+      await syncDerived(true);
     },
 
     async pause() {
       timer = pauseTimer(timer);
-      await syncDerived();
+      await syncDerived(true);
     },
 
     async resume() {
       await audio.prepare();
       timer = resumeTimer(timer);
-      await syncDerived();
+      await syncDerived(true);
     },
 
     async skip() {
       timer = skipTimer(timer, config);
-      await syncDerived();
+      await syncDerived(true);
     },
 
     async reset() {

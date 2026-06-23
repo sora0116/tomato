@@ -64,6 +64,7 @@
           };
 
           nativeBuildInputs = [
+            pkgs.cargo-tauri
             pkgs.nodejs
             pkgs.importNpmLock.npmConfigHook
             pkgs.pkg-config
@@ -74,24 +75,37 @@
 
           buildInputs = runtimeLibs;
           desktopItems = [ desktopItem ];
+          doCheck = false;
 
-          npmRoot = src;
+          npmRoot = ".";
 
-          preBuild = ''
+          buildPhase = ''
+            runHook preBuild
             export HOME="$TMPDIR"
-            npm run build
+            cargo tauri build --no-bundle
+            runHook postBuild
           '';
-
-          cargoBuildFlags = [
-            "--release"
-            "--manifest-path"
-            "src-tauri/Cargo.toml"
-          ];
 
           installPhase = ''
             runHook preInstall
 
-            install -Dm755 target/release/pomodoro-timer $out/bin/pomodoro-timer
+            binary_path=""
+            for candidate in \
+              src-tauri/target/*/release/pomodoro-timer \
+              src-tauri/target/release/pomodoro-timer
+            do
+              if [ -f "$candidate" ]; then
+                binary_path="$candidate"
+                break
+              fi
+            done
+
+            if [ -z "$binary_path" ]; then
+              echo "pomodoro-timer binary not found in target directories" >&2
+              exit 1
+            fi
+
+            install -Dm755 "$binary_path" $out/bin/pomodoro-timer
             install -Dm644 src-tauri/icons/128x128.png \
               $out/share/icons/hicolor/128x128/apps/pomodoro-timer.png
 
