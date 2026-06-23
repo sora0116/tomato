@@ -133,6 +133,27 @@ sound_enabled = true
 nix develop
 ```
 
+### NixOS / Flake 利用
+
+`flake.nix` に実行可能パッケージを追加しています。
+
+```bash
+nix build .#default
+nix run .#default
+```
+
+NixOS の `environment.systemPackages` には次のように入れられます。
+
+```nix
+{
+  environment.systemPackages = [
+    inputs.pomodoro-timer.packages.${pkgs.system}.default
+  ];
+}
+```
+
+`libayatana-appindicator` のようなトレイ用ライブラリはラッパーで `LD_LIBRARY_PATH` に追加しています。
+
 ### 開発起動
 
 ```bash
