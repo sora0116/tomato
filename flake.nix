@@ -1,0 +1,38 @@
+{
+  description = "Pomodoro timer development shell";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+  };
+
+  outputs =
+    { self, nixpkgs, flake-utils }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = import nixpkgs { inherit system; };
+      in
+      {
+        devShells.default = pkgs.mkShell {
+          packages = with pkgs; [
+            cargo
+            clippy
+            nodejs
+            pkg-config
+            rustc
+            rustfmt
+            cargo-tauri
+            typescript
+            webkitgtk_4_1
+            gtk3
+            glib
+            openssl
+            libayatana-appindicator
+            librsvg
+            xdotool
+          ];
+        };
+      }
+    );
+}

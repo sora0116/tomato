@@ -1,0 +1,17 @@
+{
+  "extends": "@tsconfig/svelte/tsconfig.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["svelte", "vite/client"],
+    "noEmit": true,
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "allowJs": false,
+    "checkJs": false,
+    "moduleDetection": "force"
+  },
+  "include": ["src/**/*.ts", "src/**/*.svelte"]
+}
